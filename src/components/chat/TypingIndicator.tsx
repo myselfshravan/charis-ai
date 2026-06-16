@@ -1,7 +1,10 @@
 import { motion } from "framer-motion";
 import { Sparkles } from "lucide-react";
-import { ProductGridSkeleton } from "@/components/chat/ProductGrid";
 
+/**
+ * Neutral "thinking" state — works for any answer (a one-line count or a full
+ * product grid). No fake product skeletons.
+ */
 export function TypingIndicator() {
   return (
     <motion.div
@@ -13,15 +16,17 @@ export function TypingIndicator() {
       <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary to-fuchsia-500 text-primary-foreground">
         <Sparkles className="h-4 w-4" />
       </div>
-      <div className="min-w-0 flex-1 space-y-3">
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <span className="relative flex h-2 w-2">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/70" />
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
-          </span>
-          Curating looks for you…
+      <div className="flex items-center gap-2 rounded-2xl rounded-tl-md border border-border bg-card px-4 py-3">
+        <div className="flex items-center gap-1">
+          {[0, 150, 300].map((delay) => (
+            <span
+              key={delay}
+              className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/60"
+              style={{ animationDelay: `${delay}ms` }}
+            />
+          ))}
         </div>
-        <ProductGridSkeleton count={4} />
+        <span className="text-xs text-muted-foreground">Thinking…</span>
       </div>
     </motion.div>
   );

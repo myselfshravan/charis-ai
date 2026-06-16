@@ -1,8 +1,9 @@
 import { motion } from "framer-motion";
-import { Sparkles, User } from "lucide-react";
+import { Sparkles, User, Zap } from "lucide-react";
 import { Markdown } from "@/components/chat/Markdown";
 import { ProductGrid } from "@/components/chat/ProductGrid";
 import { parseReply } from "@/lib/products";
+import { formatDuration } from "@/lib/time";
 import type { Message } from "@/types/chat";
 
 const fade = {
@@ -35,6 +36,12 @@ export function MessageBubble({ message }: { message: Message }) {
           </div>
         )}
         {products.length > 0 && <ProductGrid products={products} />}
+        {message.durationMs != null && (
+          <p className="flex items-center gap-1 text-[11px] text-muted-foreground">
+            <Zap className="h-3 w-3" />
+            {formatDuration(message.durationMs)}
+          </p>
+        )}
       </div>
     </motion.div>
   );

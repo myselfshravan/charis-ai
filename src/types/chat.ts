@@ -4,6 +4,17 @@ export interface Message {
   id: string;
   role: Role;
   content: string;
+  /** Latency of the API call, in ms — set on assistant messages only. */
+  durationMs?: number;
+}
+
+/** A persisted chat conversation (one per "New chat"). */
+export interface ChatSession {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  messages: Message[];
 }
 
 /** A turn sent to the backend — only the fields the model needs. */
