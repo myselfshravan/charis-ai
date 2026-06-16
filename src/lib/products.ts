@@ -35,9 +35,15 @@ export function parseReply(content: string): ParsedReply {
       ? parsed
       : Array.isArray((parsed as { products?: unknown }).products)
         ? (parsed as { products: unknown[] }).products
-        : [];
-    const products = (arr as Product[]).filter((p) => p && typeof p.name === "string");
-    return { text: content.replace(match[0], "").trim(), products };
+        : null;
+
+    // Only treat the block as products if every item is product-shaped (has a
+    // name). Non-product json (e.g. a brand/count split) is left in the text so
+    // its data is never silently dropped.
+    if (arr && arr.every((p) => p && typeof (p as Product).name === "string")) {
+      return { text: content.replace(match[0], "").trim(), products: arr as Product[] };
+    }
+    return { text: content.trim(), products: [] };
   } catch {
     return { text: content.trim(), products: [] };
   }
