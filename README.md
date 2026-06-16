@@ -76,9 +76,30 @@ docker run -p 8787:8787 \
   charis
 ```
 
-Works as-is on Railway, Render, Fly.io, a VPS, or any container host. (For serverless/Vercel-style
-functions, note that agent responses can take ~10–20s, so raise the function timeout accordingly — a
-long-running server avoids that limit entirely.)
+Works as-is on Railway, Render, Fly.io, a VPS, or any container host.
+
+### Vercel (recommended)
+
+The repo is Vercel-ready: the frontend deploys as a static Vite build and `/api/chat` runs as a
+serverless function (`api/chat.js`) — both share `server/chat-core.js`. `vercel.json` sets the
+build, bakes in `VITE_API_URL=/api/chat`, and raises the function timeout to 60s (Groq + MCP turns
+take ~10–20s; Hobby caps at 60s).
+
+1. Import the GitHub repo at [vercel.com/new](https://vercel.com/new) (it auto-detects Vite).
+2. In **Project → Settings → Environment Variables**, add the secrets (these are NOT in the repo):
+
+   | Variable | Required | Notes |
+   | --- | --- | --- |
+   | `GROQ_API_KEY` | ✅ | Your Groq key |
+   | `MCP_AUTH_TOKEN` | ➖ | Bearer token for the MCP (if its auth is on) |
+   | `GROQ_MODEL` | ➖ | Defaults to `openai/gpt-oss-120b` |
+   | `MCP_URL` | ➖ | Defaults to the fashion-explore URL |
+   | `POSTHOG_API_KEY` | ➖ | Enables analytics; omit to disable |
+
+3. Deploy. Charis is live, frontend + API on one domain.
+
+> The fashion-explore MCP must be publicly reachable from Vercel's servers (it is, via the
+> Cloudflare tunnel) — see the auth/DNS note in the MCP docs if you switch profiles.
 
 ### Mobile
 
@@ -141,4 +162,3 @@ src/
 (`catalog_products`, `price_history`, brands, sources, ~209k products). It exposes typed SQL tools
 (`execute_sql`, `run_registered_query`, …). The model picks the right tools per query; this UI just
 renders the synthesized answer.
-# charis-ai
