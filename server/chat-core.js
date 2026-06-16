@@ -23,22 +23,37 @@ export const GROQ_MODEL = process.env.GROQ_MODEL || "openai/gpt-oss-120b";
 export const MCP_SERVER_URL = MCP_URL;
 export const HAS_MCP_AUTH = Boolean(MCP_AUTH_TOKEN);
 
-// Guard: only construct PostHog when a key is set, so dev/collaborators without
-// a key don't install exception handlers or fire failing network requests.
-export const posthog = POSTHOG_API_KEY
-  ? new PostHog(POSTHOG_API_KEY, { host: POSTHOG_HOST, enableExceptionAutocapture: true })
+// Analytics runs only in production (e.g. Vercel) with a key set — so local dev
+// never blocks on, or logs, PostHog network errors. Set POSTHOG_LOCAL=1 to
+// force it on locally. Fail-fast options keep it from ever stalling a request.
+export const analyticsEnabled =
+  Boolean(POSTHOG_API_KEY) &&
+  (process.env.NODE_ENV === "production" || process.env.POSTHOG_LOCAL === "1");
+
+export const posthog = analyticsEnabled
+  ? new PostHog(POSTHOG_API_KEY, {
+      host: POSTHOG_HOST,
+      enableExceptionAutocapture: true,
+      flushAt: 1,
+      fetchRetryCount: 0,
+      requestTimeout: 3000,
+    })
   : null;
 
 function capture(event) {
   posthog?.capture(event);
 }
 
-/** Flush queued events — important in serverless before the function freezes. */
+/**
+ * Flush queued events — important in serverless before the function freezes.
+ * Bounded by a timeout so an unreachable PostHog never delays a chat response.
+ */
 export async function flushAnalytics() {
+  if (!posthog) return;
   try {
-    await posthog?.flush();
+    await Promise.race([posthog.flush(), new Promise((resolve) => setTimeout(resolve, 2500))]);
   } catch {
-    /* analytics flush is best-effort */
+    /* analytics is best-effort */
   }
 }
 
@@ -99,6 +114,24 @@ function extractContent(data) {
   return parts.join("\n").trim();
 }
 
+/** One call to Groq's Responses API. */
+async function requestGroq(messages) {
+  const res = await fetch(`${GROQ_BASE_URL}/responses`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${GROQ_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: GROQ_MODEL,
+      instructions: SYSTEM_PROMPT,
+      input: messages,
+      tools: [mcpTool],
+    }),
+  });
+  return { ok: res.ok, status: res.status, data: await res.json() };
+}
+
 /**
  * Run one chat turn. Returns { status, json } — framework-agnostic so the
  * caller just forwards it to its response object.
@@ -118,39 +151,29 @@ export async function handleChat(messages, { distinctId } = {}) {
   });
 
   try {
-    const groqRes = await fetch(`${GROQ_BASE_URL}/responses`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${GROQ_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: GROQ_MODEL,
-        instructions: SYSTEM_PROMPT,
-        input: messages,
-        tools: [mcpTool],
-      }),
-    });
+    let res = await requestGroq(messages);
+    // Some models intermittently emit malformed tool calls; one retry usually fixes it.
+    if (!res.ok && res.data?.error?.code === "tool_use_failed") {
+      res = await requestGroq(messages);
+    }
 
-    const data = await groqRes.json();
-
-    if (!groqRes.ok) {
-      console.error("Groq error:", JSON.stringify(data));
-      const message = data?.error?.message ?? `Groq request failed (${groqRes.status}).`;
+    if (!res.ok) {
+      console.error("Groq error:", JSON.stringify(res.data));
+      const message = res.data?.error?.message ?? `Groq request failed (${res.status}).`;
       capture({
         distinctId,
         event: "chat error",
         properties: {
-          error_type: "groq_api_error",
-          status_code: groqRes.status,
+          error_type: res.data?.error?.code ?? "groq_api_error",
+          status_code: res.status,
           error_message: message,
           model: GROQ_MODEL,
         },
       });
-      return { status: 502, json: { error: message } };
+      return { status: 502, json: { error: friendlyError(res.data) } };
     }
 
-    const content = extractContent(data);
+    const content = extractContent(res.data);
     if (!content) {
       capture({
         distinctId,
@@ -172,4 +195,12 @@ export async function handleChat(messages, { distinctId } = {}) {
     posthog?.captureException(err, distinctId, { model: GROQ_MODEL });
     return { status: 500, json: { error: "Failed to reach Groq. Check the server logs." } };
   }
+}
+
+/** User-facing message — surface a hint when the model botched tool calls. */
+function friendlyError(data) {
+  if (data?.error?.code === "tool_use_failed") {
+    return "The model had trouble using the catalog tools. Please try again — or switch GROQ_MODEL to openai/gpt-oss-120b for more reliable tool use.";
+  }
+  return data?.error?.message ?? "Something went wrong. Please try again.";
 }

@@ -52,7 +52,7 @@ app.listen(PORT, () => {
   console.log(`✓ Charis API on http://localhost:${PORT}`);
   console.log(`  model:     ${GROQ_MODEL}`);
   console.log(`  mcp:       ${MCP_SERVER_URL}${HAS_MCP_AUTH ? " (auth on)" : " (no auth token)"}`);
-  console.log(`  analytics: ${posthog ? "PostHog on" : "off (POSTHOG_API_KEY unset)"}`);
+  console.log(`  analytics: ${posthog ? "PostHog on" : "off (prod-only; set POSTHOG_LOCAL=1 to enable here)"}`);
   console.log(`  frontend:  ${servesFrontend ? "serving dist/" : "not built (dev mode — use Vite)"}`);
 });
 
