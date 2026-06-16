@@ -61,30 +61,25 @@ const SYSTEM_PROMPT = `You are Charis, Klydo's AI fashion shopping assistant.
 Use the fashion-explore MCP tools to query the live product catalog
 (catalog_products, price_history, brands, sources) and answer with real data.
 
+ALWAYS call the fashion-explore tools to fetch real products before answering a
+product query. Never answer a product query from memory or make up data.
+
 WHEN YOU RETURN PRODUCTS, reply with exactly:
 1. One short, friendly sentence (no headings).
-2. A single fenced \`\`\`json code block containing an ARRAY of the products you found.
-   Each object has these keys:
-     - name           (string)
-     - brand          (string or null)
-     - price          (number, in ₹)
-     - original_price (number or null)
-     - discount_pct   (integer or null)
-     - image          (string image URL or null)
-     - url            (string product page URL or null)
+2. A single fenced \`\`\`json code block: an ARRAY of the products the tools
+   returned. Keys per object: name (string), brand (string|null),
+   price (number, in ₹), original_price (number|null), discount_pct (integer|null),
+   image (string image URL|null), url (string product page URL|null).
 3. Nothing after the json block.
 
-Example:
-Here are some great black tees under ₹1500:
-\`\`\`json
-[{"name":"Oversized Cotton Tee","brand":"Snitch","price":899,"original_price":1299,"discount_pct":31,"image":"https://...","url":"https://..."}]
-\`\`\`
-
-FOR NON-PRODUCT answers (trends, comparisons, follow-up questions), reply in
+For non-product answers (counts, trends, comparisons, follow-ups), reply in
 plain concise Markdown WITHOUT a json block.
 
-RULES:
-- Never invent products, prices, images, or URLs — only report tool results; use null when unknown.
+RULES — these are strict:
+- Use ONLY products the tools actually returned. NEVER invent products, prices,
+  images, or URLs, and NEVER use placeholder/sample URLs like example.com.
+- Use the real image and product URLs exactly as returned by the tools; use null when missing.
+- If the tools return no matching products, say so briefly and return an empty array [].
 - Prices are in ₹. Keep the tone friendly and fashion-savvy.`;
 
 const mcpTool = {
@@ -114,6 +109,14 @@ function extractContent(data) {
   return parts.join("\n").trim();
 }
 
+/** Did the model fake products instead of using the catalog tools? */
+function isFabricated(content, usedTools) {
+  if (!content) return false;
+  if (/example\.com/i.test(content)) return true; // never appears in real catalog data
+  if (content.includes("```json") && !usedTools) return true; // "products" with no tool call
+  return false;
+}
+
 /** One call to Groq's Responses API. */
 async function requestGroq(messages) {
   const res = await fetch(`${GROQ_BASE_URL}/responses`, {
@@ -129,7 +132,9 @@ async function requestGroq(messages) {
       tools: [mcpTool],
     }),
   });
-  return { ok: res.ok, status: res.status, data: await res.json() };
+  const data = await res.json();
+  const usedTools = Array.isArray(data.output) && data.output.some((i) => i.type === "mcp_call");
+  return { ok: res.ok, status: res.status, data, usedTools };
 }
 
 /**
@@ -152,9 +157,16 @@ export async function handleChat(messages, { distinctId } = {}) {
 
   try {
     let res = await requestGroq(messages);
-    // Some models intermittently emit malformed tool calls; one retry usually fixes it.
-    if (!res.ok && res.data?.error?.code === "tool_use_failed") {
+    let content = res.ok ? extractContent(res.data) : "";
+
+    // Retry once if the model botched its tool calls, or fabricated products
+    // (parroted the format instead of querying the catalog tools).
+    const shouldRetry =
+      (!res.ok && res.data?.error?.code === "tool_use_failed") ||
+      (res.ok && isFabricated(content, res.usedTools));
+    if (shouldRetry) {
       res = await requestGroq(messages);
+      content = res.ok ? extractContent(res.data) : "";
     }
 
     if (!res.ok) {
@@ -173,7 +185,19 @@ export async function handleChat(messages, { distinctId } = {}) {
       return { status: 502, json: { error: friendlyError(res.data) } };
     }
 
-    const content = extractContent(res.data);
+    if (isFabricated(content, res.usedTools)) {
+      console.error("Fabricated response (no tool call / example.com):", content.slice(0, 200));
+      capture({
+        distinctId,
+        event: "chat error",
+        properties: { error_type: "fabricated_response", model: GROQ_MODEL },
+      });
+      return {
+        status: 502,
+        json: { error: "I couldn't pull live results from the catalog just now. Please try again." },
+      };
+    }
+
     if (!content) {
       capture({
         distinctId,
